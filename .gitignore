@@ -1,0 +1,32 @@
+# Environment variables (sensitive data)
+.env
+
+# Build directory
+/build/
+
+# Backup files (do not commit backup data)
+backups/
+
+# Temporary files
+*.tmp
+*.log
+
+# Docker volumes data (if mounted locally)
+data/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Certificate files (should be generated per installation)
+*.pem
+*.key
+*.crt
+dhparams.pem
