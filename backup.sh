@@ -11,14 +11,6 @@ print_banner() {
     echo
 }
 
-get_compose_cmd() {
-    if docker compose version &>/dev/null; then
-        echo "docker compose"
-    else
-        echo "docker-compose"
-    fi
-}
-
 backup_diy() {
     local backup_dir="${1:-backups}"
     local timestamp
@@ -141,13 +133,15 @@ restore_diy() {
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
     
-    log_info "正在停止服务..."
-    $compose_cmd down
-    
     local backup_dir
     backup_dir=$(dirname "$(realpath "$backup_file")")
     local backup_name
     backup_name=$(basename "$backup_file" .tar.gz | sed 's/_mail$//')
+    local timestamp
+    timestamp=$(echo "$backup_name" | sed 's/mailserver_backup_//')
+    
+    log_info "正在停止服务..."
+    $compose_cmd down
     
     log_info "恢复邮件数据..."
     if [[ -f "${backup_dir}/${backup_name}_mail.tar.gz" ]]; then
@@ -166,8 +160,6 @@ restore_diy() {
     
     log_info "恢复数据库..."
     if [[ -f "${backup_dir}/db_dump_${timestamp}.sql" ]]; then
-        local timestamp
-        timestamp=$(echo "$backup_name" | sed 's/mailserver_backup_//')
         $compose_cmd exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" < "${backup_dir}/db_dump_${timestamp}.sql" 2>/dev/null || true
     fi
     

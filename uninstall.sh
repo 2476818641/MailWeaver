@@ -28,11 +28,7 @@ uninstall_diy() {
     confirm_dangerous_operation "完全卸载邮件服务器"
     
     local compose_cmd
-    if docker compose version &>/dev/null; then
-        compose_cmd="docker compose"
-    else
-        compose_cmd="docker-compose"
-    fi
+    compose_cmd=$(get_compose_cmd)
     
     log_info "正在停止服务..."
     $compose_cmd down 2>/dev/null || true
@@ -64,11 +60,7 @@ uninstall_mailu() {
     confirm_dangerous_operation "完全卸载 Mailu"
     
     local compose_cmd
-    if docker compose version &>/dev/null; then
-        compose_cmd="docker compose"
-    else
-        compose_cmd="docker-compose"
-    fi
+    compose_cmd=$(get_compose_cmd)
     
     log_info "正在停止服务..."
     $compose_cmd down 2>/dev/null || true

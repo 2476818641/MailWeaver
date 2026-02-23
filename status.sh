@@ -4,14 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.lib.sh"
 
-get_compose_cmd() {
-    if docker compose version &>/dev/null; then
-        echo "docker compose"
-    else
-        echo "docker-compose"
-    fi
-}
-
 find_build_dir() {
     if [[ -d "build" ]]; then
         echo "build"

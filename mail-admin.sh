@@ -23,25 +23,13 @@ check_requirements() {
     fi
 }
 
-get_docker_compose_cmd() {
-    if docker compose version &>/dev/null; then
-        echo "docker compose"
-    else
-        echo "docker-compose"
-    fi
-}
-
 db_exec() {
     local sql="$1"
-    $(get_docker_compose_cmd) exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" -N -e "$sql" 2>/dev/null
+    $(get_compose_cmd) exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" -N -e "$sql" 2>/dev/null
 }
 
 doveadm_exec() {
-    $(get_docker_compose_cmd) exec -T dovecot doveadm "$@"
-}
-
-escape_sql() {
-    printf '%s' "$1" | sed "s/'/''/g"
+    $(get_compose_cmd) exec -T dovecot doveadm "$@"
 }
 
 add_user() {
@@ -264,7 +252,7 @@ show_help() {
 show_logs() {
     local service="${1:-}"
     local compose_cmd
-    compose_cmd=$(get_docker_compose_cmd)
+    compose_cmd=$(get_compose_cmd)
     
     if [[ -z "$service" ]]; then
         $compose_cmd logs -f --tail=100
@@ -275,7 +263,7 @@ show_logs() {
 
 show_status() {
     local compose_cmd
-    compose_cmd=$(get_docker_compose_cmd)
+    compose_cmd=$(get_compose_cmd)
     
     echo -e "${CYAN}=== 服务状态 ===${NC}"
     $compose_cmd ps
@@ -288,7 +276,7 @@ show_status() {
 restart_service() {
     local service="${1:-}"
     local compose_cmd
-    compose_cmd=$(get_docker_compose_cmd)
+    compose_cmd=$(get_compose_cmd)
     
     if [[ -z "$service" ]]; then
         log_info "重启所有服务..."

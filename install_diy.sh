@@ -307,7 +307,7 @@ EOF
 prepare_dockerfiles() {
     log_info "正在准备 Dockerfiles 和启动脚本..."
     
-    mkdir -p postfix dovecot roundcube/conf
+    mkdir -p postfix dovecot roundcube/conf acme
     
     cp ../postfix/Dockerfile ./postfix/
     cp ../dovecot/Dockerfile ./dovecot/
@@ -498,7 +498,11 @@ request_ssl_certificate() {
 
 build_and_start() {
     log_info "正在构建并启动所有服务..."
-    docker-compose up -d --build
+    
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    
+    $compose_cmd up -d --build
     
     log_info "等待 MariaDB 就绪..."
     wait_for_mariadb
@@ -509,8 +513,18 @@ build_and_start() {
     local escaped_domain
     escaped_domain=$(printf '%s' "$SERVER_HOSTNAME" | sed 's/"/\\"/g')
     
-    docker-compose exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" \
+    $compose_cmd exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" \
         -e "INSERT IGNORE INTO domains (domain, description, transport, created, modified) VALUES ('${escaped_domain}', 'Default Domain', 'virtual', NOW(), NOW());" 2>/dev/null || true
+    
+    echo
+    log_info "检查所有容器健康状态..."
+    if check_all_containers; then
+        log_info "所有服务启动正常"
+    else
+        log_warn "部分服务可能存在问题，请检查日志"
+        echo
+        log_info "查看日志: $compose_cmd logs -f"
+    fi
 }
 
 print_completion() {
@@ -535,23 +549,45 @@ print_completion() {
     echo -e "  3. 配置 DNS 记录 (A, MX, SPF, DMARC)"
     echo
     echo -e "${CYAN}管理命令:${NC}"
-    echo -e "  cd build && docker-compose ps        # 查看状态"
-    echo -e "  cd build && docker-compose logs -f   # 查看日志"
+    echo -e "  cd build && docker compose ps        # 查看状态"
+    echo -e "  cd build && docker compose logs -f   # 查看日志"
     echo -e "  cd build && ./mail-admin.sh add      # 添加邮箱"
+    echo
+    echo -e "${CYAN}证书自动续期:${NC}"
+    echo -e "  ${GREEN}../cert-renew.sh --cron${NC}    # 设置自动续期任务 (每天凌晨 2:00)"
+    echo -e "  ${GREEN}../cert-renew.sh --test${NC}    # 测试证书续期"
     echo
 }
 
 main() {
     print_banner
     check_existing_build
+    
+    show_progress "收集配置信息" 1 7
     collect_config
+    
+    show_progress "准备构建目录" 2 7
     prepare_build_dir
+    
+    show_progress "生成配置文件" 3 7
     generate_env_file
+    
+    show_progress "生成 Docker Compose" 4 7
     generate_docker_compose
+    
+    show_progress "生成数据库 Schema" 5 7
     generate_init_sql
+    
+    show_progress "准备 Dockerfiles" 6 7
     prepare_dockerfiles
+    
+    echo
     request_ssl_certificate
+    
+    show_progress "启动服务" 7 7
+    echo
     build_and_start
+    
     print_completion
 }
 

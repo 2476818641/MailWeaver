@@ -20,6 +20,8 @@ This project provides an interactive shell script designed to simplify the proce
 *   **Automated**: The script handles tedious tasks such as configuration generation, directory creation, and service orchestration.
 *   **Complete Management Tools**: Built-in scripts for user management, backup, logs, and monitoring.
 *   **Security Enhanced**: SQL injection protection, password strength validation, and error handling.
+*   **Health Monitoring**: Automatic container health checks after installation to ensure all services are running properly.
+*   **SSL Certificate Auto-Renewal**: Built-in SSL certificate renewal system with cron job support, ensuring your certificates never expire.
 
 ### Design Philosophy
 
@@ -87,6 +89,11 @@ cd build
 # Uninstall
 ./uninstall.sh diy         # Uninstall DIY mail server
 ./uninstall.sh mailu       # Uninstall Mailu
+
+# SSL Certificate Renewal
+./cert-renew.sh            # Check and renew SSL certificates
+./cert-renew.sh --test     # Test certificate renewal
+./cert-renew.sh --cron     # Add to crontab for automatic renewal (daily at 2:00 AM)
 ```
 
 ### Project Structure
@@ -100,6 +107,7 @@ cd build
 ├── backup.sh               # Backup and restore tool
 ├── logs.sh                 # Log viewer
 ├── status.sh               # Service status checker
+├── cert-renew.sh           # SSL certificate renewal tool
 ├── lib/
 │   └── common.lib.sh       # Common function library
 ├── templates/              # Directory for all templates
@@ -132,6 +140,8 @@ This project is licensed under the [MIT License](LICENSE).
 *   **自动化**: 脚本负责处理配置生成、目录创建、服务编排等繁琐工作。
 *   **完整管理工具**: 内置用户管理、备份、日志、状态监控脚本。
 *   **安全增强**: SQL 注入防护、密码强度验证、完善的错误处理。
+*   **健康监控**: 安装后自动检查所有容器健康状态，确保服务正常运行。
+*   **SSL 证书自动续期**: 内置 SSL 证书续期系统，支持 cron 定时任务，确保证书永不过期。
 
 ### 设计哲学
 
@@ -199,6 +209,11 @@ cd build
 # 卸载
 ./uninstall.sh diy         # 卸载 DIY 邮件服务器
 ./uninstall.sh mailu       # 卸载 Mailu
+
+# SSL 证书续期
+./cert-renew.sh            # 检查并续期 SSL 证书
+./cert-renew.sh --test     # 测试证书续期
+./cert-renew.sh --cron     # 添加到 crontab 自动续期（每天凌晨 2:00 执行）
 ```
 
 ### 项目结构
@@ -212,6 +227,7 @@ cd build
 ├── backup.sh               # 备份恢复工具
 ├── logs.sh                 # 日志查看器
 ├── status.sh               # 服务状态检查
+├── cert-renew.sh           # SSL 证书续期工具
 ├── lib/
 │   └── common.lib.sh       # 公共函数库
 ├── templates/              # 存放所有模板文件
@@ -223,7 +239,6 @@ cd build
 ├── roundcube/              # DIY: Roundcube 的 Dockerfile 和 Nginx 模板
 └── README.md               # 本说明文件
 ```
-/
 
 
 

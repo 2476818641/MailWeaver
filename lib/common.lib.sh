@@ -45,8 +45,11 @@ wait_for_service() {
     
     log_info "等待 $service_name 服务就绪..."
     local attempt=1
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    
     while [[ $attempt -le $max_attempts ]]; do
-        if docker-compose exec -T "$container" echo "ok" &>/dev/null; then
+        if $compose_cmd exec -T "$container" echo "ok" &>/dev/null; then
             log_info "$service_name 已就绪"
             return 0
         fi
@@ -63,8 +66,11 @@ wait_for_mariadb() {
     local max_attempts=60
     local attempt=1
     log_info "等待 MariaDB 服务就绪..."
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    
     while [[ $attempt -le $max_attempts ]]; do
-        if docker-compose exec -T mariadb mysqladmin ping -h localhost --silent &>/dev/null; then
+        if $compose_cmd exec -T mariadb mysqladmin ping -h localhost --silent &>/dev/null; then
             log_info "MariaDB 已就绪"
             return 0
         fi
@@ -199,6 +205,11 @@ urlencode() {
     echo "$encoded"
 }
 
+# --- SQL 转义 ---
+escape_sql() {
+    printf '%s' "$1" | sed "s/'/''/g"
+}
+
 # --- 检查依赖 ---
 check_dependencies() {
     local missing=()
@@ -256,12 +267,16 @@ check_prerequisites() {
 # --- 数据库操作 ---
 db_exec() {
     local sql="$1"
-    docker-compose exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" -e "$sql" 2>/dev/null
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    $compose_cmd exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" -e "$sql" 2>/dev/null
 }
 
 db_exec_ignore_error() {
     local sql="$1"
-    docker-compose exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" -e "$sql" 2>/dev/null || true
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    $compose_cmd exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" -e "$sql" 2>/dev/null || true
 }
 
 # --- 备份相关 ---
@@ -274,8 +289,11 @@ create_backup() {
     
     log_info "正在创建备份..."
     
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    
     # 备份数据库
-    docker-compose exec -T mariadb mysqldump -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" > "${backup_dir}/db_dump_${timestamp}.sql"
+    $compose_cmd exec -T mariadb mysqldump -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" > "${backup_dir}/db_dump_${timestamp}.sql"
     
     # 备份数据目录
     tar -czf "$backup_file" -C "$(dirname "$PWD")" "$(basename "$PWD")/data" 2>/dev/null || true
@@ -300,8 +318,11 @@ restore_backup() {
     
     log_info "正在恢复备份..."
     
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    
     # 停止服务
-    docker-compose down
+    $compose_cmd down
     
     # 恢复数据
     local backup_dir=$(dirname "$backup_file")
@@ -310,13 +331,13 @@ restore_backup() {
     
     # 恢复数据库
     if [[ -f "${backup_dir}/db_dump_${timestamp}.sql" ]]; then
-        docker-compose up -d mariadb
+        $compose_cmd up -d mariadb
         wait_for_mariadb
-        docker-compose exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" < "${backup_dir}/db_dump_${timestamp}.sql"
+        $compose_cmd exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" < "${backup_dir}/db_dump_${timestamp}.sql"
     fi
     
     # 重启服务
-    docker-compose up -d
+    $compose_cmd up -d
     
     log_info "备份恢复完成"
 }
@@ -357,4 +378,122 @@ confirm_dangerous_operation() {
         log_info "操作已取消"
         exit 0
     fi
+}
+
+# --- Docker Compose 命令检测 ---
+get_compose_cmd() {
+    if docker compose version &>/dev/null; then
+        echo "docker compose"
+    else
+        echo "docker-compose"
+    fi
+}
+
+# --- 容器健康检查 ---
+check_container_health() {
+    local container_name="$1"
+    local max_attempts="${2:-30}"
+    local interval="${3:-2}"
+    
+    log_info "检查 $container_name 健康状态..."
+    local attempt=1
+    while [[ $attempt -le $max_attempts ]]; do
+        local health_status
+        health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null || echo "no-health")
+        
+        case "$health_status" in
+            healthy)
+                log_info "$container_name: ${GREEN}健康${NC}"
+                return 0
+                ;;
+            unhealthy)
+                log_warn "$container_name: ${YELLOW}不健康${NC}"
+                return 1
+                ;;
+            no-health)
+                local running_status
+                running_status=$(docker inspect --format='{{.State.Status}}' "$container_name" 2>/dev/null || echo "not-found")
+                if [[ "$running_status" == "running" ]]; then
+                    log_info "$container_name: ${GREEN}运行正常 (无健康检查)${NC}"
+                    return 0
+                fi
+                ;;
+        esac
+        
+        echo -n "."
+        sleep "$interval"
+        ((attempt++))
+    done
+    echo
+    log_error "$container_name 健康检查超时"
+    return 1
+}
+
+check_all_containers() {
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    
+    log_info "检查所有容器状态..."
+    
+    local containers
+    containers=$($compose_cmd ps -q 2>/dev/null || true)
+    
+    if [[ -z "$containers" ]]; then
+        log_error "未找到运行中的容器"
+        return 1
+    fi
+    
+    local all_ok=true
+    for container in $containers; do
+        local container_name
+        container_name=$(docker inspect --format='{{.Name}}' "$container" 2>/dev/null | sed 's|/||')
+        
+        if ! check_container_health "$container_name" 15 2; then
+            all_ok=false
+        fi
+    done
+    
+    if $all_ok; then
+        log_info "所有容器检查通过"
+        return 0
+    else
+        log_error "部分容器存在健康问题"
+        return 1
+    fi
+}
+
+# --- 进度显示 ---
+show_progress() {
+    local message="$1"
+    local current="$2"
+    local total="$3"
+    local percentage=$((current * 100 / total))
+    
+    local bars=40
+    local filled=$((percentage * bars / 100))
+    local empty=$((bars - filled))
+    
+    printf "\r${CYAN}%-20s${NC} [" "$message"
+    for ((i=0; i<filled; i++)); do printf "="; done
+    for ((i=0; i<empty; i++)); do printf " "; done
+    printf "] %3d%%" "$percentage"
+    
+    if [[ $current -eq $total ]]; then
+        echo
+    fi
+}
+
+show_spinner() {
+    local message="$1"
+    local pid=$2
+    
+    local spin="|/-\\"
+    local i=0
+    
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i + 1) % 4 ))
+        printf "\r${CYAN}%-30s${NC} %c" "$message" "${spin:$i:1}"
+        sleep 0.1
+    done
+    printf "\r${GREEN}%-30s${NC} ${GREEN}✓${NC}\n" "$message"
 }

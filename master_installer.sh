@@ -4,11 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.lib.sh"
 
-VERSION="v1.7"
-
 print_banner() {
     echo -e "${CYAN}======================================================${NC}"
-    echo -e "${CYAN}===     ${PROJECT_NAME} 邮件服务器安装脚本 ${VERSION}      ===${NC}"
+    echo -e "${CYAN}===   ${PROJECT_NAME} 邮件服务器安装脚本 ${VERSION}    ===${NC}"
     echo -e "${CYAN}======================================================${NC}"
     echo
 }
@@ -25,6 +23,7 @@ check_requirements() {
 install_mailu() {
     echo -e "${CYAN}--- 开始 Mailu 安装向导 ---${NC}"
     
+    show_progress "收集配置信息" 1 8
     prompt_for_input MAILU_DOMAIN "请输入您的【主邮件域名】" ""
     while [[ -z "$MAILU_DOMAIN" ]]; do
         log_error "域名不能为空"
@@ -45,7 +44,7 @@ install_mailu() {
     done
     
     prompt_for_password CF_Key "请输入 Cloudflare Global API Key"
-    while [[ -z "$CF_Key" ]]; then
+    while [[ -z "$CF_Key" ]]; do
         log_error "API Key 不能为空"
         prompt_for_password CF_Key "请输入 Cloudflare Global API Key"
     done
@@ -54,14 +53,15 @@ install_mailu() {
     local API_TOKEN=$(generate_random_string 32)
     local INITIAL_ADMIN_PASSWORD=$(generate_strong_password 16)
     
+    show_progress "创建目录结构" 2 8
     local build_dir="mailu_build"
     rm -rf "$build_dir" && mkdir -p "$build_dir"
     
-    log_info "正在创建 Mailu 目录结构..."
     sudo mkdir -p /mailu/{redis,data,dkim,certs,filter,mail,mailqueue,overrides,webmail}
     sudo chown -R 10000:10000 /mailu
     
-    log_info "正在申请 SSL 证书..."
+    echo
+    show_progress "申请 SSL 证书" 3 8
     sudo rm -rf /mailu/certs/*
     
     if ! sudo docker run --rm \
@@ -87,11 +87,10 @@ install_mailu() {
     
     sudo mv "/mailu/certs/${cert_dir}/fullchain.cer" "/mailu/certs/cert.pem" 2>/dev/null || true
     sudo mv "/mailu/certs/${cert_dir}/privkey.pem" "/mailu/certs/key.pem" 2>/dev/null || true
-    sudo rm -rf "/mailu/certs/${cert_dir}"
+    sudo rm -rf /mailu/certs/"${cert_dir}"
     log_info "SSL 证书申请成功"
     
-    log_info "正在生成 Mailu 配置文件..."
-    
+    show_progress "生成配置文件" 4 8
     cat > "${build_dir}/mailu.env" <<EOF
 MAILU_DOMAIN=${MAILU_DOMAIN}
 MAILU_HOSTNAMES=${MAILU_HOSTNAMES}
@@ -112,7 +111,7 @@ EOF
     sed -i "s|\${MAILU_DOMAIN}|${MAILU_DOMAIN}|g" "${build_dir}/mailu.env"
     sed -i "s|\${MAILU_HOSTNAMES}|${MAILU_HOSTNAMES}|g" "${build_dir}/mailu.env"
     sed -i "s|\${MAILU_POSTMASTER}|${MAILU_POSTMASTER}|g" "${build_dir}/mailu.env"
-    sed -i "s|\${WEBSITE}|${MAILU_WEBSITE}|g" "${build_dir}/mailu.env"
+    sed -i "s|\${WEBSITE}|${WEBSITE}|g" "${build_dir}/mailu.env"
     sed -i "s|\${SITENAME}|${MAILU_HOSTNAMES}|g" "${build_dir}/mailu.env"
     sed -i "s|\${SECRET_KEY}|${SECRET_KEY}|g" "${build_dir}/mailu.env"
     sed -i "s|\${API_TOKEN}|${API_TOKEN}|g" "${build_dir}/mailu.env"
@@ -121,6 +120,9 @@ EOF
     sed -i "s|CF_Key=.*|CF_Key=${CF_Key}|g" "${build_dir}/mailu.env"
     
     log_info "已生成 ${build_dir}/mailu.env"
+    
+    show_progress "配置自动续期" 5 8
+    log_info "正在注入自动续订服务..."
     
     cd "$build_dir"
     
@@ -141,13 +143,35 @@ EOF
              acme.sh --install-cert -d ${MAILU_HOSTNAMES} 
              --fullchain-file /acme.sh/cert.pem 
              --key-file /acme.sh/key.pem 
-             --reloadcmd 'docker restart mailu-front-1'"
+             --reloadcmd 'cd /path/to/mailu_build && docker-compose -p mailu restart front'"
     networks:
       - default
 EOF
     
+    show_progress "启动 Mailu 服务" 6 8
+    echo
     log_info "正在启动 Mailu 服务..."
-    docker-compose -p mailu up -d
+    
+    local compose_cmd
+    compose_cmd=$(get_compose_cmd)
+    $compose_cmd -p mailu up -d
+    
+    show_progress "等待服务就绪" 7 8
+    echo
+    log_info "等待服务启动中..."
+    sleep 5
+    
+    log_info "检查容器健康状态..."
+    cd mailu_build
+    if $compose_cmd ps &>/dev/null; then
+        $compose_cmd ps
+    else
+        log_warn "无法获取服务状态"
+    fi
+    cd ..
+    
+    show_progress "安装完成" 8 8
+    echo
     
     echo
     echo -e "${GREEN}======================================================${NC}"
@@ -163,9 +187,16 @@ EOF
     echo
     echo -e "请复制并运行以下命令:${NC}"
     echo
-    echo -e "  ${YELLOW}docker compose -p mailu exec admin flask mailu admin ${MAILU_POSTMASTER} ${MAILU_DOMAIN} '${INITIAL_ADMIN_PASSWORD}'${NC}"
+    echo -e "  ${YELLOW}cd mailu_build && docker compose -p mailu exec admin flask mailu admin ${MAILU_POSTMASTER} ${MAILU_DOMAIN} '${INITIAL_ADMIN_PASSWORD}'${NC}"
     echo
     echo -e "${CYAN}提示: 首次登录后，请在后台获取 DNS 记录并配置${NC}"
+    echo
+    echo -e "${CYAN}证书 automatically 续期:${NC}"
+    echo -e "  已配置自动续期，每天 自动检查"
+    echo
+    echo -e "${CYAN}管理命令:${NC}"
+    echo -e "  cd mailu_build && docker compose -p mailu ps      # 查看状态"
+    echo -e "  cd mailu_build && docker compose -p mailu logs -f # 查看日志"
     echo
 }
 
