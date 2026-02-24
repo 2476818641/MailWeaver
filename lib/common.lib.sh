@@ -18,12 +18,60 @@ export VERSION="v1.7"
 export CONFIG_FILE=".env"
 export BUILD_DIR="build"
 export LOG_DIR="logs"
+export LOG_FILE="${LOG_DIR}/mailweaver.log"
+
+# --- 日志目录初始化 ---
+init_log_dir() {
+    if [[ -n "${SCRIPT_DIR:-}" ]]; then
+        local log_path="${SCRIPT_DIR}/${LOG_DIR}"
+        mkdir -p "$log_path" 2>/dev/null || true
+    fi
+}
 
 # --- 日志函数 ---
-log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
-log_debug() { [[ "$DEBUG" == "1" ]] && echo -e "${BLUE}[DEBUG]${NC} $1" || true; }
+_log_to_file() {
+    local level="$1"
+    local message="$2"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_path="${SCRIPT_DIR:-}/${LOG_FILE}"
+
+    if [[ -n "${SCRIPT_DIR:-}" ]] && mkdir -p "$(dirname "$log_path")" 2>/dev/null; then
+        echo "[$timestamp] [$level] $message" >> "$log_path" 2>/dev/null || true
+    fi
+}
+
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+    _log_to_file "INFO" "$1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
+    _log_to_file "WARN" "$1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+    _log_to_file "ERROR" "$1"
+}
+
+log_debug() {
+    [[ "$DEBUG" == "1" ]] && echo -e "${BLUE}[DEBUG]${NC} $1" || true
+    _log_to_file "DEBUG" "$1"
+}
+
+log_operation() {
+    local operation="$1"
+    local status="${2:-SUCCESS}"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_path="${SCRIPT_DIR:-}/${LOG_DIR}/operations.log"
+
+    if [[ -n "${SCRIPT_DIR:-}" ]] && mkdir -p "$(dirname "$log_path")" 2>/dev/null; then
+        echo "[$timestamp] [OPERATION] $operation - $status" >> "$log_path" 2>/dev/null || true
+    fi
+}
 
 # --- 错误处理 ---
 set_error_trap() {
@@ -40,14 +88,14 @@ trap 'set_error_trap $LINENO "$BASH_COMMAND"' ERR
 wait_for_service() {
     local container=$1
     local service_name=${2:-$container}
-    local max_attempts=${3:-30}
-    local interval=${4:-2}
-    
+    local max_attempts=${3:-${WAIT_MAX_ATTEMPTS:-30}}
+    local interval=${4:-${WAIT_INTERVAL:-2}}
+
     log_info "等待 $service_name 服务就绪..."
     local attempt=1
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
-    
+
     while [[ $attempt -le $max_attempts ]]; do
         if $compose_cmd exec -T "$container" echo "ok" &>/dev/null; then
             log_info "$service_name 已就绪"
@@ -58,28 +106,29 @@ wait_for_service() {
         ((attempt++))
     done
     echo
-    log_error "$service_name 启动超时 (等待 ${max_attempts} 次)"
+    log_error "$service_name 启动超时 (等待 ${max_attempts} 次，间隔 ${interval} 秒)"
     return 1
 }
 
 wait_for_mariadb() {
-    local max_attempts=60
+    local max_attempts=${1:-${WAIT_MAX_ATTEMPTS:-60}}
+    local interval=${2:-${WAIT_INTERVAL:-2}}
     local attempt=1
     log_info "等待 MariaDB 服务就绪..."
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
-    
+
     while [[ $attempt -le $max_attempts ]]; do
         if $compose_cmd exec -T mariadb mysqladmin ping -h localhost --silent &>/dev/null; then
             log_info "MariaDB 已就绪"
             return 0
         fi
         echo -n "."
-        sleep 2
+        sleep $interval
         ((attempt++))
     done
     echo
-    log_error "MariaDB 启动超时"
+    log_error "MariaDB 启动超时 (等待 ${max_attempts} 次，间隔 ${interval} 秒)"
     return 1
 }
 
@@ -210,6 +259,82 @@ escape_sql() {
     printf '%s' "$1" | sed "s/'/''/g"
 }
 
+# --- 配置验证 ---
+validate_domain() {
+    local domain="$1"
+    local domain_regex="^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
+
+    if [[ -z "$domain" ]]; then
+        log_error "域名不能为空"
+        return 1
+    fi
+
+    if [[ ! "$domain" =~ $domain_regex ]]; then
+        log_error "域名格式无效: $domain"
+        return 1
+    fi
+
+    return 0
+}
+
+validate_fqdn() {
+    local fqdn="$1"
+    local fqdn_regex="^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
+
+    if [[ -z "$fqdn" ]]; then
+        log_error "FQDN 不能为空"
+        return 1
+    fi
+
+    if [[ ! "$fqdn" =~ $fqdn_regex ]]; then
+        log_error "FQDN 格式无效: $fqdn"
+        return 1
+    fi
+
+    return 0
+}
+
+validate_email() {
+    local email="$1"
+    local email_regex="^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+
+    if [[ -z "$email" ]]; then
+        log_error "邮箱地址不能为空"
+        return 1
+    fi
+
+    if [[ ! "$email" =~ $email_regex ]]; then
+        log_error "邮箱地址格式无效: $email"
+        return 1
+    fi
+
+    return 0
+}
+
+validate_port_available() {
+    local port="$1"
+    local protocol="${2:-tcp}"
+
+    if [[ -z "$port" ]] || ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
+        log_error "端口号无效: $port"
+        return 1
+    fi
+
+    if command -v ss &>/dev/null; then
+        if ss -tlnp | grep -q ":$port "; then
+            log_warn "端口 $port 已被占用"
+            return 1
+        fi
+    elif command -v netstat &>/dev/null; then
+        if netstat -tlnp 2>/dev/null | grep -q ":$port "; then
+            log_warn "端口 $port 已被占用"
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
 # --- 检查依赖 ---
 check_dependencies() {
     local missing=()
@@ -269,6 +394,12 @@ db_exec() {
     local sql="$1"
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
+
+    if ! $compose_cmd ps mariadb &>/dev/null; then
+        log_error "MariaDB 容器未运行"
+        return 1
+    fi
+
     $compose_cmd exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" -e "$sql" 2>/dev/null
 }
 
@@ -381,12 +512,16 @@ confirm_dangerous_operation() {
 }
 
 # --- Docker Compose 命令检测 ---
+declare -g COMPOSE_CMD=""
 get_compose_cmd() {
-    if docker compose version &>/dev/null; then
-        echo "docker compose"
-    else
-        echo "docker-compose"
+    if [[ -z "$COMPOSE_CMD" ]]; then
+        if docker compose version &>/dev/null; then
+            COMPOSE_CMD="docker compose"
+        else
+            COMPOSE_CMD="docker-compose"
+        fi
     fi
+    echo "$COMPOSE_CMD"
 }
 
 # --- 容器健康检查 ---

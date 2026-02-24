@@ -44,7 +44,10 @@ renew_diy_certs() {
     
     if $compose_cmd ps acme &>/dev/null; then
         log_info "运行 acme.sh 证书续期检查..."
-        
+
+        local log_file="${SCRIPT_DIR}/logs/cert-renew.log"
+        mkdir -p "$(dirname "$log_file")" 2>/dev/null || true
+
         # 记录证书目录修改时间
         local old_mtime
         if [[ -d "./data/certs/${SERVER_HOSTNAME}" ]]; then
@@ -53,8 +56,11 @@ renew_diy_certs() {
             old_mtime="0"
         fi
         
+        local log_file="${SCRIPT_DIR}/logs/cert-renew.log"
+        mkdir -p "$(dirname "$log_file")" 2>/dev/null || true
+
         # 运行证书续期
-        if $compose_cmd run --rm acme $acme_cmd -d "${SERVER_HOSTNAME}" --home /acme.sh 2>&1 | tee -a "${SCRIPT_DIR}/logs/cert-renew.log"; then
+        if $compose_cmd run --rm acme $acme_cmd -d "${SERVER_HOSTNAME}" --home /acme.sh 2>&1 | tee -a "$log_file"; then
             log_info "证书检查完成"
             
             # 检查证书是否更新（通过比较修改时间）
@@ -96,19 +102,24 @@ renew_diy_certs() {
 
 renew_mailu_certs() {
     log_info "检查 Mailu 证书续期..."
-    
+
     local test_mode="${1:-false}"
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
-    
-    if docker ps | grep -q "acme"; then
+
+    local acme_running=false
+    if $compose_cmd ps --format '{{.Service}}' 2>/dev/null | grep -q "^acme$"; then
+        acme_running=true
+    fi
+
+    if $acme_running; then
         log_info "Mailu acme 服务自动续期已配置"
-        
+
         if [[ "$test_mode" == "true" ]]; then
             log_warn "测试模式：手动触发证书续期"
             $compose_cmd exec acme sh -c "acme.sh --force --renew -d ${MAILU_HOSTNAMES:-}" || true
         fi
-        
+
         return 0
     else
         log_warn "Mailu acme 容器未运行"
@@ -132,20 +143,22 @@ show_help() {
 
 setup_cron() {
     local script_path="$0"
-    local cron_cmd="0 2 * * * $script_path >> ${SCRIPT_DIR}/logs/cert-renew.log 2>&1"
-    
+    local log_file="${SCRIPT_DIR}/logs/cert-renew.log"
+    local cron_cmd="0 2 * * * $script_path >> ${log_file} 2>&1"
+
     log_info "设置证书自动续期 cron 任务..."
-    
+
     if crontab -l 2>/dev/null | grep -q "cert-renew.sh"; then
         log_warn "cron 任务已存在"
         crontab -l | grep "cert-renew.sh"
         return 0
     fi
-    
+
     (crontab -l 2>/dev/null; echo "$cron_cmd") | crontab -
-    
+
     log_info "cron 任务已添加"
     log_info "每天凌晨 2:00 自动检查证书续期"
+    log_info "日志文件: $log_file"
     echo
     log_info "查看 cron 任务: crontab -l"
     log_info "删除 cron 任务: crontab -e"

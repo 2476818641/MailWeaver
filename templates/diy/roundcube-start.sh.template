@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+
+mkdir -p /var/www/roundcube/config
+
+cat > /var/www/roundcube/config/config.inc.php <<EOF
+<?php
+\$config = [];
+\$config['db_dsnw'] = 'mysql://${DB_USER}:${DB_PASS_ENCODED}@mariadb/${DB_NAME}';
+\$config['default_host'] = 'ssl://${SERVER_HOSTNAME}';
+\$config['smtp_server'] = 'ssl://${SERVER_HOSTNAME}';
+\$config['smtp_port'] = 465;
+\$config['smtp_user'] = '%u';
+\$config['smtp_pass'] = '%p';
+\$config['product_name'] = 'Webmail';
+\$config['des_key'] = '${DES_KEY}';
+\$config['plugins'] = ['password', 'archive', 'zipdownload'];
+\$config['enable_html'] = true;
+\$config['draft_autosave'] = 60;
+\$config['login_lc'] = 2;
+EOF
+
+chown www-data:www-data /var/www/roundcube/config/config.inc.php
+chmod 640 /var/www/roundcube/config/config.inc.php
+
+envsubst '${SERVER_HOSTNAME}' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+
+php-fpm &
+exec nginx -g 'daemon off;'

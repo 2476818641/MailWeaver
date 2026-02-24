@@ -1,0 +1,54 @@
+#!/bin/bash
+set -e
+
+cat > /etc/dovecot/dovecot-sql.conf.ext <<EOF
+driver = mysql
+connect = host=mariadb dbname=${DB_NAME} user=${DB_USER} password=${DB_PASS}
+password_query = SELECT username as user, password FROM mailboxes WHERE username = '%u' AND active = 1
+user_query = SELECT maildir, ${VMAIL_UID} AS uid, ${VMAIL_GID} AS gid FROM mailboxes WHERE username = '%u' AND active = 1
+EOF
+
+chmod 640 /etc/dovecot/dovecot-sql.conf.ext
+
+sed -i 's/^#*!include auth-system.conf.ext/!include auth-sql.conf.ext/' /etc/dovecot/conf.d/10-auth.conf
+sed -i "s|^#*mail_location.*|mail_location = maildir:/var/mail/vhosts/%d/%n|" /etc/dovecot/conf.d/10-mail.conf
+sed -i "s|^#*ssl_cert = .*|ssl_cert = </certs/${SERVER_HOSTNAME}/fullchain.cer|" /etc/dovecot/conf.d/10-ssl.conf
+sed -i "s|^#*ssl_key = .*|ssl_key = </certs/${SERVER_HOSTNAME}/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
+sed -i "s/^#*ssl = .*/ssl = required/" /etc/dovecot/conf.d/10-ssl.conf
+
+cat > /etc/dovecot/conf.d/10-master.conf <<'EOF'
+service imap-login {
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+
+service pop3-login {
+  inet_listener pop3s {
+    port = 995
+    ssl = yes
+  }
+}
+
+service lmtp {
+  unix_listener /var/spool/postfix/private/dovecot-lmtp {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+EOF
+
+chown -R vmail:dovecot /etc/dovecot
+chmod -R o-rwx /etc/dovecot
+
+exec /usr/sbin/dovecot -F

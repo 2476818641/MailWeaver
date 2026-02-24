@@ -68,6 +68,7 @@ EOF
     ls -lh "${backup_dir}" | grep "$timestamp"
     echo
     echo -e "${CYAN}提示:${NC} 建议将备份文件保存到安全的位置"
+    log_operation "BACKUP ${backup_dir} ${timestamp}" "SUCCESS"
 }
 
 backup_mailu() {
@@ -164,8 +165,9 @@ restore_diy() {
     fi
     
     $compose_cmd up -d
-    
+
     log_info "恢复完成"
+    log_operation "RESTORE ${backup_file}" "SUCCESS"
 }
 
 show_help() {

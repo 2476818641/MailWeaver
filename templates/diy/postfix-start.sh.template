@@ -1,0 +1,58 @@
+#!/bin/bash
+set -e
+
+groupadd -g ${VMAIL_GID} vmail 2>/dev/null || true
+useradd -u ${VMAIL_UID} -g vmail -d /var/mail/vhosts -s /usr/sbin/nologin vmail 2>/dev/null || true
+chown -R vmail:vmail /var/mail/vhosts
+
+cat > /etc/postfix/mysql-virtual-domains-maps.cf <<EOF
+user = ${DB_USER}
+password = ${DB_PASS}
+hosts = mariadb
+dbname = ${DB_NAME}
+query = SELECT 1 FROM domains WHERE domain='%s' AND active = 1
+EOF
+
+cat > /etc/postfix/mysql-virtual-mailbox-maps.cf <<EOF
+user = ${DB_USER}
+password = ${DB_PASS}
+hosts = mariadb
+dbname = ${DB_NAME}
+query = SELECT 1 FROM mailboxes WHERE username='%s' AND active = 1
+EOF
+
+cat > /etc/postfix/mysql-virtual-alias-maps.cf <<EOF
+user = ${DB_USER}
+password = ${DB_PASS}
+hosts = mariadb
+dbname = ${DB_NAME}
+query = SELECT goto FROM aliases WHERE address='%s' AND active = 1
+EOF
+
+chmod 640 /etc/postfix/mysql-*.cf
+chgrp postfix /etc/postfix/mysql-*.cf
+
+postconf -e "myhostname = ${SERVER_HOSTNAME}"
+postconf -e "virtual_mailbox_domains = proxy:mysql:/etc/postfix/mysql-virtual-domains-maps.cf"
+postconf -e "virtual_mailbox_maps = proxy:mysql:/etc/postfix/mysql-virtual-mailbox-maps.cf"
+postconf -e "virtual_alias_maps = proxy:mysql:/etc/postfix/mysql-virtual-alias-maps.cf"
+postconf -e "virtual_transport = lmtp:unix:private/dovecot-lmtp"
+postconf -e "virtual_mailbox_base = /var/mail/vhosts"
+
+postconf -e "smtpd_sasl_type = dovecot"
+postconf -e "smtpd_sasl_path = private/auth"
+postconf -e "smtpd_sasl_auth_enable = yes"
+
+postconf -e "smtpd_tls_cert_file = /certs/${SERVER_HOSTNAME}/fullchain.cer"
+postconf -e "smtpd_tls_key_file = /certs/${SERVER_HOSTNAME}/privkey.pem"
+postconf -e "smtpd_tls_security_level = may"
+
+postconf -M submission/inet="submission inet n - y - - smtpd"
+postconf -P "submission/inet/smtpd_tls_security_level=encrypt"
+postconf -P "submission/inet/smtpd_sasl_auth_enable=yes"
+
+postconf -M smtps/inet="smtps inet n - y - - smtpd"
+postconf -P "smtps/inet/smtpd_tls_wrappermode=yes"
+postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes"
+
+exec /usr/sbin/postfix start-fg

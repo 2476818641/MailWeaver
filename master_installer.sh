@@ -11,6 +11,22 @@ print_banner() {
     echo
 }
 
+cleanup_on_error() {
+    local build_dir="${1:-}"
+    log_error "安装过程中发生错误，正在清理..."
+    if [[ -n "$build_dir" ]] && [[ -d "$build_dir" ]]; then
+        log_info "删除 $build_dir 目录..."
+        rm -rf "$build_dir"
+    fi
+    if [[ -d "/mailu" ]]; then
+        log_info "清理 /mailu 目录..."
+        sudo rm -rf /mailu/certs/* 2>/dev/null || true
+    fi
+    log_info "清理完成"
+}
+
+trap 'cleanup_on_error "$build_dir"' ERR
+
 check_requirements() {
     if [[ ! -d "./templates" ]] || [[ ! -f "./install_diy.sh" ]]; then
         log_error "关键文件或目录未找到"
@@ -22,24 +38,36 @@ check_requirements() {
 
 install_mailu() {
     echo -e "${CYAN}--- 开始 Mailu 安装向导 ---${NC}"
-    
+    local build_dir="mailu_build"
+
     show_progress "收集配置信息" 1 8
     prompt_for_input MAILU_DOMAIN "请输入您的【主邮件域名】" ""
-    while [[ -z "$MAILU_DOMAIN" ]]; do
-        log_error "域名不能为空"
+    while [[ -z "$MAILU_DOMAIN" ]] || ! validate_domain "$MAILU_DOMAIN"; do
+        if [[ -n "$MAILU_DOMAIN" ]]; then
+            log_error "域名格式无效"
+        fi
         prompt_for_input MAILU_DOMAIN "请输入您的【主邮件域名】" ""
     done
-    
+
     local default_hostnames="mail.${MAILU_DOMAIN}"
     prompt_for_input MAILU_HOSTNAMES "请输入服务器的【完整主机名】" "$default_hostnames"
+    while [[ -z "$MAILU_HOSTNAMES" ]] || ! validate_domain "$MAILU_HOSTNAMES"; do
+        if [[ -n "$MAILU_HOSTNAMES" ]]; then
+            log_error "主机名格式无效"
+        fi
+        prompt_for_input MAILU_HOSTNAMES "请输入服务器的【完整主机名】" "$default_hostnames"
+    done
+
     prompt_for_input MAILU_POSTMASTER "请输入 Postmaster 用户名" "admin"
     prompt_for_input MAILU_WEBSITE "请输入关联网站 URL" "https://${MAILU_HOSTNAMES}"
-    
+
     echo
     echo -e "${CYAN}--- Cloudflare API (用于 DNS 验证申请证书) ---${NC}"
     prompt_for_input CF_Email "请输入 Cloudflare 登录邮箱" ""
-    while [[ -z "$CF_Email" ]]; do
-        log_error "邮箱不能为空"
+    while [[ -z "$CF_Email" ]] || ! validate_email "$CF_Email"; do
+        if [[ -n "$CF_Email" ]]; then
+            log_error "邮箱地址格式无效"
+        fi
         prompt_for_input CF_Email "请输入 Cloudflare 登录邮箱" ""
     done
     
@@ -54,7 +82,6 @@ install_mailu() {
     local INITIAL_ADMIN_PASSWORD=$(generate_strong_password 16)
     
     show_progress "创建目录结构" 2 8
-    local build_dir="mailu_build"
     rm -rf "$build_dir" && mkdir -p "$build_dir"
     
     sudo mkdir -p /mailu/{redis,data,dkim,certs,filter,mail,mailqueue,overrides,webmail}
@@ -84,10 +111,11 @@ install_mailu() {
         log_error "证书目录未找到"
         exit 1
     fi
-    
+
     sudo mv "/mailu/certs/${cert_dir}/fullchain.cer" "/mailu/certs/cert.pem" 2>/dev/null || true
     sudo mv "/mailu/certs/${cert_dir}/privkey.pem" "/mailu/certs/key.pem" 2>/dev/null || true
     sudo rm -rf /mailu/certs/"${cert_dir}"
+    sudo chmod 600 /mailu/certs/*.pem 2>/dev/null || true
     log_info "SSL 证书申请成功"
     
     show_progress "生成配置文件" 4 8
@@ -106,19 +134,21 @@ EOF
     
     TLS_FLAVOR=cert envsubst < "templates/mailu/docker-compose.yml.template" > "${build_dir}/docker-compose.yml"
     log_info "已生成 ${build_dir}/docker-compose.yml"
-    
-    cp "templates/mailu/mailu.env.template" "${build_dir}/mailu.env.template"
-    sed -i "s|\${MAILU_DOMAIN}|${MAILU_DOMAIN}|g" "${build_dir}/mailu.env"
-    sed -i "s|\${MAILU_HOSTNAMES}|${MAILU_HOSTNAMES}|g" "${build_dir}/mailu.env"
-    sed -i "s|\${MAILU_POSTMASTER}|${MAILU_POSTMASTER}|g" "${build_dir}/mailu.env"
-    sed -i "s|\${WEBSITE}|${WEBSITE}|g" "${build_dir}/mailu.env"
-    sed -i "s|\${SITENAME}|${MAILU_HOSTNAMES}|g" "${build_dir}/mailu.env"
-    sed -i "s|\${SECRET_KEY}|${SECRET_KEY}|g" "${build_dir}/mailu.env"
-    sed -i "s|\${API_TOKEN}|${API_TOKEN}|g" "${build_dir}/mailu.env"
-    sed -i "s|TLS_FLAVOR=.*|TLS_FLAVOR=cert|g" "${build_dir}/mailu.env"
-    sed -i "s|CF_Email=.*|CF_Email=${CF_Email}|g" "${build_dir}/mailu.env"
-    sed -i "s|CF_Key=.*|CF_Key=${CF_Key}|g" "${build_dir}/mailu.env"
-    
+
+    cat > "${build_dir}/mailu.env" <<EOF
+MAILU_DOMAIN=${MAILU_DOMAIN}
+MAILU_HOSTNAMES=${MAILU_HOSTNAMES}
+MAILU_POSTMASTER=${MAILU_POSTMASTER}
+WEBSITE=${MAILU_WEBSITE}
+SITENAME=${MAILU_HOSTNAMES}
+SECRET_KEY=${SECRET_KEY}
+API_TOKEN=${API_TOKEN}
+TLS_FLAVOR=cert
+CF_Email=${CF_Email}
+CF_Key=${CF_Key}
+EOF
+    chmod 600 "${build_dir}/mailu.env"
+
     log_info "已生成 ${build_dir}/mailu.env"
     
     show_progress "配置自动续期" 5 8
