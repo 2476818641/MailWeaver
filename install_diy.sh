@@ -23,25 +23,43 @@ check_existing_build() {
     fi
 }
 
+cleanup_on_error() {
+    log_error "安装过程中发生错误，正在清理..."
+    cd "$SCRIPT_DIR" 2>/dev/null || true
+    if [[ -d "build" ]]; then
+        log_info "删除 build 目录..."
+        rm -rf build
+    fi
+    log_info "清理完成"
+}
+
+trap 'cleanup_on_error' ERR
+
 collect_config() {
     echo -e "${CYAN}--- 1. 基础信息配置 ---${NC}"
     prompt_for_input SERVER_HOSTNAME "请输入服务器的 FQDN" ""
-    while [[ -z "$SERVER_HOSTNAME" ]]; do
-        log_error "主机名不能为空"
+    while [[ -z "$SERVER_HOSTNAME" ]] || ! validate_fqdn "$SERVER_HOSTNAME"; do
+        if [[ -n "$SERVER_HOSTNAME" ]]; then
+            log_error "FQDN 格式无效"
+        fi
         prompt_for_input SERVER_HOSTNAME "请输入服务器的 FQDN" ""
     done
-    
+
     prompt_for_input LETS_ENCRYPT_EMAIL "请输入用于 Let's Encrypt 的邮箱地址" ""
-    while [[ -z "$LETS_ENCRYPT_EMAIL" ]]; do
-        log_error "邮箱不能为空"
+    while [[ -z "$LETS_ENCRYPT_EMAIL" ]] || ! validate_email "$LETS_ENCRYPT_EMAIL"; do
+        if [[ -n "$LETS_ENCRYPT_EMAIL" ]]; then
+            log_error "邮箱地址格式无效"
+        fi
         prompt_for_input LETS_ENCRYPT_EMAIL "请输入用于 Let's Encrypt 的邮箱地址" ""
     done
-    
+
     echo
     echo -e "${CYAN}--- 2. Cloudflare API ---${NC}"
     prompt_for_input CF_Email "请输入 Cloudflare 登录邮箱" ""
-    while [[ -z "$CF_Email" ]]; do
-        log_error "邮箱不能为空"
+    while [[ -z "$CF_Email" ]] || ! validate_email "$CF_Email"; do
+        if [[ -n "$CF_Email" ]]; then
+            log_error "邮箱地址格式无效"
+        fi
         prompt_for_input CF_Email "请输入 Cloudflare 登录邮箱" ""
     done
     
@@ -306,15 +324,15 @@ EOF
 
 prepare_dockerfiles() {
     log_info "正在准备 Dockerfiles 和启动脚本..."
-    
+
     mkdir -p postfix dovecot roundcube/conf acme
-    
+
     cp ../postfix/Dockerfile ./postfix/
     cp ../dovecot/Dockerfile ./dovecot/
     cp ../roundcube/Dockerfile ./roundcube/
     cp ../roundcube/conf/nginx.conf.template ./roundcube/conf/
-    
-    cat > ./postfix/start.sh <<'POSTFIX_START'
+
+    cat > ./postfix/start.sh <<'POSTFIX_START_EOF'
 #!/bin/bash
 set -e
 
@@ -322,29 +340,29 @@ groupadd -g ${VMAIL_GID} vmail 2>/dev/null || true
 useradd -u ${VMAIL_UID} -g vmail -d /var/mail/vhosts -s /usr/sbin/nologin vmail 2>/dev/null || true
 chown -R vmail:vmail /var/mail/vhosts
 
-cat > /etc/postfix/mysql-virtual-domains-maps.cf <<EOF
+cat > /etc/postfix/mysql-virtual-domains-maps.cf <<'POSTFIX_MYSQL_EOF'
 user = ${DB_USER}
 password = ${DB_PASS}
 hosts = mariadb
 dbname = ${DB_NAME}
 query = SELECT 1 FROM domains WHERE domain='%s' AND active = 1
-EOF
+POSTFIX_MYSQL_EOF
 
-cat > /etc/postfix/mysql-virtual-mailbox-maps.cf <<EOF
+cat > /etc/postfix/mysql-virtual-mailbox-maps.cf <<'POSTFIX_MYSQL_EOF2'
 user = ${DB_USER}
 password = ${DB_PASS}
 hosts = mariadb
 dbname = ${DB_NAME}
 query = SELECT 1 FROM mailboxes WHERE username='%s' AND active = 1
-EOF
+POSTFIX_MYSQL_EOF2
 
-cat > /etc/postfix/mysql-virtual-alias-maps.cf <<EOF
+cat > /etc/postfix/mysql-virtual-alias-maps.cf <<'POSTFIX_MYSQL_EOF3'
 user = ${DB_USER}
 password = ${DB_PASS}
 hosts = mariadb
 dbname = ${DB_NAME}
 query = SELECT goto FROM aliases WHERE address='%s' AND active = 1
-EOF
+POSTFIX_MYSQL_EOF3
 
 chmod 640 /etc/postfix/mysql-*.cf
 chgrp postfix /etc/postfix/mysql-*.cf
@@ -373,18 +391,18 @@ postconf -P "smtps/inet/smtpd_tls_wrappermode=yes"
 postconf -P "smtps/inet/smtpd_sasl_auth_enable=yes"
 
 exec /usr/sbin/postfix start-fg
-POSTFIX_START
-    
-    cat > ./dovecot/start.sh <<'DOVECOT_START'
+POSTFIX_START_EOF
+
+    cat > ./dovecot/start.sh <<'DOVECOT_START_EOF'
 #!/bin/bash
 set -e
 
-cat > /etc/dovecot/dovecot-sql.conf.ext <<EOF
+cat > /etc/dovecot/dovecot-sql.conf.ext <<'DOVECOT_SQL_EOF'
 driver = mysql
 connect = host=mariadb dbname=${DB_NAME} user=${DB_USER} password=${DB_PASS}
 password_query = SELECT username as user, password FROM mailboxes WHERE username = '%u' AND active = 1
 user_query = SELECT maildir, ${VMAIL_UID} AS uid, ${VMAIL_GID} AS gid FROM mailboxes WHERE username = '%u' AND active = 1
-EOF
+DOVECOT_SQL_EOF
 
 chmod 640 /etc/dovecot/dovecot-sql.conf.ext
 
@@ -394,7 +412,7 @@ sed -i "s|^#*ssl_cert = .*|ssl_cert = </certs/${SERVER_HOSTNAME}/fullchain.cer|"
 sed -i "s|^#*ssl_key = .*|ssl_key = </certs/${SERVER_HOSTNAME}/privkey.pem|" /etc/dovecot/conf.d/10-ssl.conf
 sed -i "s/^#*ssl = .*/ssl = required/" /etc/dovecot/conf.d/10-ssl.conf
 
-cat > /etc/dovecot/conf.d/10-master.conf <<'EOF'
+cat > /etc/dovecot/conf.d/10-master.conf <<'DOVECOT_MASTER_EOF'
 service imap-login {
   inet_listener imaps {
     port = 993
@@ -424,21 +442,21 @@ service auth {
     group = postfix
   }
 }
-EOF
+DOVECOT_MASTER_EOF
 
 chown -R vmail:dovecot /etc/dovecot
 chmod -R o-rwx /etc/dovecot
 
 exec /usr/sbin/dovecot -F
-DOVECOT_START
-    
-    cat > ./roundcube/start.sh <<'ROUNDCUBE_START'
+DOVECOT_START_EOF
+
+    cat > ./roundcube/start.sh <<'ROUNDCUBE_START_EOF'
 #!/bin/bash
 set -e
 
 mkdir -p /var/www/roundcube/config
 
-cat > /var/www/roundcube/config/config.inc.php <<EOF
+cat > /var/www/roundcube/config/config.inc.php <<'ROUNDCUBE_PHP_EOF'
 <?php
 \$config = [];
 \$config['db_dsnw'] = 'mysql://${DB_USER}:${DB_PASS_ENCODED}@mariadb/${DB_NAME}';
@@ -453,7 +471,7 @@ cat > /var/www/roundcube/config/config.inc.php <<EOF
 \$config['enable_html'] = true;
 \$config['draft_autosave'] = 60;
 \$config['login_lc'] = 2;
-EOF
+ROUNDCUBE_PHP_EOF
 
 chown www-data:www-data /var/www/roundcube/config/config.inc.php
 chmod 640 /var/www/roundcube/config/config.inc.php
@@ -462,8 +480,8 @@ envsubst '${SERVER_HOSTNAME}' < /etc/nginx/nginx.conf.template > /etc/nginx/ngin
 
 php-fpm &
 exec nginx -g 'daemon off;'
-ROUNDCUBE_START
-    
+ROUNDCUBE_START_EOF
+
     chmod +x postfix/start.sh dovecot/start.sh roundcube/start.sh
 }
 
@@ -494,28 +512,51 @@ request_ssl_certificate() {
     fi
     
     log_info "SSL 证书申请成功"
+    if [[ -d "./data/certs/${SERVER_HOSTNAME}" ]]; then
+        chmod -R 755 "./data/certs/${SERVER_HOSTNAME}"
+        chmod 600 "./data/certs/${SERVER_HOSTNAME}/privkey.pem" 2>/dev/null || true
+    fi
 }
 
 build_and_start() {
     log_info "正在构建并启动所有服务..."
-    
+
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
-    
-    $compose_cmd up -d --build
-    
+
+    log_info "构建 Docker 镜像..."
+    if ! $compose_cmd build --no-cache 2>&1 | tee /tmp/diy-build.log; then
+        log_error "Docker 镜像构建失败"
+        log_error "详细日志: /tmp/diy-build.log"
+        exit 1
+    fi
+
+    log_info "启动容器..."
+    if ! $compose_cmd up -d; then
+        log_error "容器启动失败"
+        exit 1
+    fi
+
     log_info "等待 MariaDB 就绪..."
-    wait_for_mariadb
-    
-    log_info "正在初始化数据库..."
+    if ! wait_for_mariadb; then
+        log_error "MariaDB 启动超时或失败"
+        $compose_cmd logs mariadb --tail=50
+        exit 1
+    fi
+
+    log_info "初始化数据库..."
     sleep 5
-    
+
     local escaped_domain
     escaped_domain=$(printf '%s' "$SERVER_HOSTNAME" | sed 's/"/\\"/g')
-    
-    $compose_cmd exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" \
-        -e "INSERT IGNORE INTO domains (domain, description, transport, created, modified) VALUES ('${escaped_domain}', 'Default Domain', 'virtual', NOW(), NOW());" 2>/dev/null || true
-    
+
+    if ! $compose_cmd exec -T mariadb mysql -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" \
+        -e "INSERT IGNORE INTO domains (domain, description, transport, created, modified) VALUES ('${escaped_domain}', 'Default Domain', 'virtual', NOW(), NOW());" 2>&1; then
+        log_error "数据库初始化失败"
+        $compose_cmd logs mariadb --tail=50
+        exit 1
+    fi
+
     echo
     log_info "检查所有容器健康状态..."
     if check_all_containers; then

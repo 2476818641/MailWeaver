@@ -88,6 +88,7 @@ add_user() {
     echo -e "  邮箱: ${GREEN}$email${NC}"
     echo -e "  密码: ${GREEN}$password${NC}"
     echo -e "  请妥善保管密码，无法找回${NC}"
+    log_operation "ADD_USER $email" "SUCCESS"
 }
 
 delete_user() {
@@ -113,8 +114,10 @@ delete_user() {
     if prompt_yes_no "确认删除邮箱 $email"; then
         db_exec "DELETE FROM mailboxes WHERE username='${escaped_email}'"
         log_info "邮箱 $email 已删除"
+        log_operation "DELETE_USER $email" "SUCCESS"
     else
         log_info "操作已取消"
+        log_operation "DELETE_USER $email" "CANCELLED"
     fi
 }
 
@@ -177,12 +180,17 @@ change_password() {
     
     read -s -p "请输入新密码: " password
     echo
-    
-    while [[ ${#password} -lt 8 ]]; do
-        log_warn "密码至少需要 8 位"
+
+    if ! validate_password_strength "$password"; then
+        log_warn "密码强度不足，请重新输入"
         read -s -p "请输入新密码: " password
         echo
-    done
+        while ! validate_password_strength "$password"; do
+            log_warn "密码强度不足，请重新输入"
+            read -s -p "请输入新密码: " password
+            echo
+        done
+    fi
     
     local encrypted_password
     encrypted_password=$(doveadm_exec pw -s SHA512-CRYPT -p "$password" 2>/dev/null)
@@ -193,8 +201,9 @@ change_password() {
     fi
     
     db_exec "UPDATE mailboxes SET password='$(escape_sql "$encrypted_password")', modified=NOW() WHERE username='${escaped_email}'"
-    
+
     log_info "密码修改成功"
+    log_operation "CHANGE_PASSWORD $email" "SUCCESS"
 }
 
 toggle_user_status() {
@@ -227,8 +236,11 @@ toggle_user_status() {
     fi
     
     db_exec "UPDATE mailboxes SET active=${new_status}, modified=NOW() WHERE username='${escaped_email}'"
-    
+
+    local status_text
+    [[ "$new_status" == "1" ]] && status_text="ENABLED" || status_text="DISABLED"
     [[ "$new_status" == "1" ]] && log_info "邮箱已启用" || log_info "邮箱已禁用"
+    log_operation "TOGGLE_USER $email $status_text" "SUCCESS"
 }
 
 show_help() {
