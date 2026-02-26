@@ -1,5 +1,6 @@
 # Environment variables (sensitive data)
 .env
+config.env
 
 # Build directory
 /build/
