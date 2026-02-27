@@ -1,5 +1,6 @@
 # Environment variables (sensitive data)
 .env
+config.env
 
 # Build directory
 /build/
@@ -10,6 +11,7 @@ backups/
 # Temporary files
 *.tmp
 *.log
+log.md
 
 # Docker volumes data (if mounted locally)
 data/

@@ -39,7 +39,6 @@ uninstall_diy() {
     cd ..
     log_info "正在删除配置文件..."
     rm -rf build/
-    rm -f .env
     
     log_info "卸载完成"
 }

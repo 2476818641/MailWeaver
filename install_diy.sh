@@ -101,11 +101,15 @@ prepare_build_dir() {
 }
 
 generate_env_file() {
-    log_info "正在生成 .env 文件..."
+    log_info "正在生成配置文件..."
     DB_PASS_ENCODED=$(urlencode "$DB_PASS_PLAIN")
     DES_KEY=$(openssl rand -base64 24 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 24)
-    
-    cat > .env <<EOF
+
+    export SERVER_HOSTNAME LETS_ENCRYPT_EMAIL CF_Email CF_Key
+    export DB_NAME DB_USER DB_PASS DB_PASS_ENCODED MYSQL_ROOT_PASSWORD
+    export DES_KEY VMAIL_UID VMAIL_GID VIMBADMIN_ADMIN_PASS
+
+    cat > config.env <<EOF
 SERVER_HOSTNAME=${SERVER_HOSTNAME}
 LETS_ENCRYPT_EMAIL=${LETS_ENCRYPT_EMAIL}
 CF_Email=${CF_Email}
@@ -120,12 +124,14 @@ VMAIL_UID=205
 VMAIL_GID=205
 VIMBADMIN_ADMIN_PASS=${VIMBADMIN_ADMIN_PASS}
 EOF
+
+    chmod 600 config.env
 }
 
 generate_docker_compose() {
     log_info "正在生成 docker-compose.yml..."
-    
-    cat > docker-compose.yml <<'EOF'
+
+    cat > docker-compose.yml.template <<'EOF'
 services:
   mariadb:
     image: mariadb:10.11
@@ -254,6 +260,9 @@ networks:
   mail-network:
     driver: bridge
 EOF
+
+    envsubst < docker-compose.yml.template > docker-compose.yml
+    rm -f docker-compose.yml.template
 }
 
 generate_init_sql() {
@@ -569,8 +578,6 @@ build_and_start() {
 }
 
 print_completion() {
-    rm -f .env
-    
     echo
     echo -e "${GREEN}======================================================${NC}"
     echo -e "${GREEN}    DIY Mail Server with ViMbAdmin 安装完成！    ${NC}"

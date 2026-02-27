@@ -37,10 +37,17 @@ show_status() {
     
     echo
     echo -e "${CYAN}=== 端口监听 ===${NC}"
-    echo -e "${GREEN}SMTP:${NC}   25 (邮件发送), 465 (SMTPS), 587 (Submission)"
-    echo -e "${GREEN}IMAP:${NC}   993 (IMAPS), 995 (POP3S)"
-    echo -e "${GREEN}HTTP:${NC}   80 (HTTP), 443 (HTTPS)"
-    echo -e "${GREEN}Admin:${NC}  8080 (ViMbAdmin)"
+    if [[ "$build_dir" == "build" ]]; then
+        echo -e "${GREEN}SMTP:${NC}   25 (邮件发送), 465 (SMTPS), 587 (Submission)"
+        echo -e "${GREEN}IMAP:${NC}   993 (IMAPS), 995 (POP3S)"
+        echo -e "${GREEN}HTTP:${NC}   80 (HTTP), 443 (HTTPS)"
+        echo -e "${GREEN}Admin:${NC}  8080 (ViMbAdmin)"
+    else
+        echo -e "${GREEN}SMTP:${NC}   25 (邮件发送), 465 (SMTPS), 587 (Submission)"
+        echo -e "${GREEN}IMAP:${NC}   993 (IMAPS), 995 (POP3S)"
+        echo -e "${GREEN}HTTP:${NC}   80 (HTTP), 443 (HTTPS)"
+        echo -e "${GREEN}Admin:${NC}  443 (/admin)"
+    fi
     echo
     
     echo -e "${CYAN}=== 快速检查 ===${NC}"

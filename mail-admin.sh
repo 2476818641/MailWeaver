@@ -9,18 +9,30 @@ check_requirements() {
         log_error "docker-compose 未找到"
         exit 1
     fi
-    
-    if [[ ! -f .env ]]; then
-        log_error "未找到 .env 配置文件。请先运行 install_diy.sh"
-        exit 1
-    fi
-    
-    load_env .env
+
+    local env_file
+    env_file=$(find_env_file)
+    load_env "$env_file"
     
     if [[ -z "${DB_USER:-}" ]] || [[ -z "${DB_PASS:-}" ]] || [[ -z "${DB_NAME:-}" ]]; then
-        log_error ".env 文件配置不完整"
+        log_error "配置文件内容不完整"
         exit 1
     fi
+}
+
+find_env_file() {
+    if [[ -f .env ]]; then
+        echo ".env"
+        return 0
+    fi
+
+    if [[ -f config.env ]]; then
+        echo "config.env"
+        return 0
+    fi
+
+    log_error "未找到配置文件（.env 或 config.env）。请先运行 install_diy.sh"
+    exit 1
 }
 
 db_exec() {

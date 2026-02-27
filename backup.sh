@@ -22,8 +22,10 @@ backup_diy() {
     fi
     
     cd build
-    
-    load_env .env
+
+    local env_file
+    env_file=$(find_env_file)
+    load_env "$env_file"
     
     mkdir -p "$backup_dir"
     
@@ -52,7 +54,7 @@ backup_diy() {
     
     log_info "备份配置文件..."
     cp docker-compose.yml "../${backup_dir}/docker-compose_${timestamp}.yml" 2>/dev/null || true
-    cp .env "../${backup_dir}/env_${timestamp}.bak" 2>/dev/null || true
+    cp "$env_file" "../${backup_dir}/env_${timestamp}.bak" 2>/dev/null || true
     
     cat > "../${backup_dir}/backup_info_${timestamp}.txt" <<EOF
 Backup Date: $(date)
@@ -128,8 +130,10 @@ restore_diy() {
     confirm_dangerous_operation "恢复备份 (将覆盖现有数据)"
     
     cd build
-    
-    load_env .env
+
+    local env_file
+    env_file=$(find_env_file)
+    load_env "$env_file"
     
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
@@ -168,6 +172,21 @@ restore_diy() {
 
     log_info "恢复完成"
     log_operation "RESTORE ${backup_file}" "SUCCESS"
+}
+
+find_env_file() {
+    if [[ -f .env ]]; then
+        echo ".env"
+        return 0
+    fi
+
+    if [[ -f config.env ]]; then
+        echo "config.env"
+        return 0
+    fi
+
+    log_error "未找到配置文件（.env 或 config.env）。请先运行 install_diy.sh"
+    exit 1
 }
 
 show_help() {

@@ -18,9 +18,11 @@ check_environment() {
     
     cd "$build_dir"
     
-    if [[ ! -f ".env" && "$build_dir" == *"build"* ]]; then
-        log_error "未找到 .env 配置文件"
-        exit 1
+    if [[ "$build_dir" == *"build"* ]]; then
+        if ! find_env_file >/dev/null; then
+            log_error "未找到配置文件（.env 或 config.env）"
+            exit 1
+        fi
     fi
     
     echo "$build_dir"
@@ -28,8 +30,10 @@ check_environment() {
 
 renew_diy_certs() {
     log_info "检查 DIY 邮件服务器证书续期..."
-    
-    load_env .env
+
+    local env_file
+    env_file=$(find_env_file)
+    load_env "$env_file"
     
     local test_mode="${1:-false}"
     local acme_cmd="--cron"
@@ -98,6 +102,20 @@ renew_diy_certs() {
         log_warn "acme 容器未运行，跳过证书续期"
         return 0
     fi
+}
+
+find_env_file() {
+    if [[ -f ".env" ]]; then
+        echo ".env"
+        return 0
+    fi
+
+    if [[ -f "config.env" ]]; then
+        echo "config.env"
+        return 0
+    fi
+
+    return 1
 }
 
 renew_mailu_certs() {

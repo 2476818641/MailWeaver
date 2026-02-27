@@ -168,12 +168,13 @@ EOF
     volumes:
       - /mailu/certs:/acme.sh
       - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
     command: >
       sh -c "acme.sh --cron --home /acme.sh && 
              acme.sh --install-cert -d ${MAILU_HOSTNAMES} 
              --fullchain-file /acme.sh/cert.pem 
              --key-file /acme.sh/key.pem 
-             --reloadcmd 'cd /path/to/mailu_build && docker-compose -p mailu restart front'"
+             --reloadcmd 'docker restart $(docker ps -q --filter name=mailu-front) || true'"
     networks:
       - default
 EOF
